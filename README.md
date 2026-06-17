@@ -1,63 +1,149 @@
 # MCP_Python
 
-Python agent that connects to the **Microsoft Learn MCP server** using the [Microsoft Agent Framework](https://github.com/microsoft/agent-framework) and authenticates via **Azure CLI** (`az login`).
+Two components:
 
-## What it does
+1. **`agent_client.py`** — local agent that queries Microsoft Learn docs via MCP
+2. **`server/`** — MCP server deployed on Azure Functions, exposes a `LearnAgent` tool
 
-- Connects to `https://learn.microsoft.com/api/mcp` (Streamable HTTP transport, no API key needed)
-- Uses **Azure AI Foundry** as the LLM backend (`gpt-4o-mini`)
-- Authenticates with `AzureCliCredential` — no secrets in code
-- Interactive REPL: ask questions, agent searches/fetches official Microsoft docs and answers
+---
 
-## Available MCP tools (exposed by Microsoft Learn)
+## Consuming the deployed MCP server
 
-| Tool | Description |
-|------|-------------|
-| `microsoft_docs_search` | Search official Microsoft/Azure docs, returns up to 10 chunks |
-| `microsoft_code_sample_search` | Search code examples from Microsoft Learn |
-| `microsoft_docs_fetch` | Fetch a full docs page as markdown from a URL |
+**Endpoint:**
+```
+https://azure-function-jnb-agents.azurewebsites.net/runtime/webhooks/mcp
+```
 
-## Requirements
+**Transport:** Streamable HTTP (MCP protocol 2025-03-26)
 
-- Python 3.9+
-- Azure CLI logged in (`az login`)
-- Azure AI Foundry project with a `gpt-4o-mini` deployment
+**Auth:** Azure Functions system key in header:
+```
+x-functions-key: <mcp_extension_key>
+```
 
-## Setup
+Get the key:
+```bash
+az functionapp keys list \
+  --name azure-function-jnb-agents \
+  --resource-group NovilloBenitoJaime \
+  --query systemKeys.mcp_extension -o tsv
+```
+
+### Available tool
+
+| Tool | Input | Description |
+|------|-------|-------------|
+| `LearnAgent` | `query` (string, required) | Searches and retrieves official Microsoft Learn documentation |
+
+### Example — Python client
+
+```python
+from mcp import ClientSession
+from mcp.client.streamable_http import streamablehttp_client
+import asyncio
+
+KEY = "<mcp_extension_key>"
+URL = "https://azure-function-jnb-agents.azurewebsites.net/runtime/webhooks/mcp"
+
+async def main():
+    async with streamablehttp_client(URL, headers={"x-functions-key": KEY}) as (r, w, _):
+        async with ClientSession(r, w) as session:
+            await session.initialize()
+            result = await session.call_tool("LearnAgent", {"query": "How to deploy Azure Container Apps?"})
+            print(result.content[0].text)
+
+asyncio.run(main())
+```
+
+Install: `pip install mcp`
+
+### Example — VS Code / Claude Code (`mcp.json`)
+
+```json
+{
+  "mcpServers": {
+    "LearnAgent": {
+      "url": "https://azure-function-jnb-agents.azurewebsites.net/runtime/webhooks/mcp",
+      "headers": {
+        "x-functions-key": "<mcp_extension_key>"
+      }
+    }
+  }
+}
+```
+
+### Example — curl (raw JSON-RPC)
+
+```bash
+KEY="<mcp_extension_key>"
+
+# Initialize
+curl -X POST https://azure-function-jnb-agents.azurewebsites.net/runtime/webhooks/mcp \
+  -H "Content-Type: application/json" \
+  -H "x-functions-key: $KEY" \
+  -d '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-03-26","capabilities":{},"clientInfo":{"name":"test","version":"1.0"}}}'
+
+# Call tool
+curl -X POST https://azure-function-jnb-agents.azurewebsites.net/runtime/webhooks/mcp \
+  -H "Content-Type: application/json" \
+  -H "x-functions-key: $KEY" \
+  -d '{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"LearnAgent","arguments":{"query":"Azure Blob Storage Python quickstart"}}}'
+```
+
+---
+
+## Local agent (`agent_client.py`)
+
+Connects to `https://learn.microsoft.com/api/mcp` directly and uses Azure AI Foundry as LLM.
+
+**Requirements:** Python 3.9+, `az login`
 
 ```bash
 python -m venv venv
-venv\Scripts\activate        # Windows
+venv\Scripts\activate
 pip install -r requirements.txt
 ```
 
-Create `.env` in the project root:
-
+Create `.env`:
 ```env
-FOUNDRY_PROJECT_ENDPOINT=https://<your-resource>.services.ai.azure.com/api/projects/<your-project>
+FOUNDRY_PROJECT_ENDPOINT=https://<resource>.services.ai.azure.com/api/projects/<project>
 FOUNDRY_MODEL=gpt-4o-mini
 ```
 
-## Run
-
 ```bash
-az login                     # once — credentials cached
 python agent_client.py
 ```
 
-```
-Microsoft Learn agent ready (Azure CLI auth). Type your question or 'quit'.
+---
 
-User: How do I deploy a container to Azure Container Apps?
-Agent: ...
+## Deploying the server
+
+```bash
+cd server
+# Edit requirements.txt if needed
+Compress-Archive -Path function_app.py,host.json,requirements.txt -DestinationPath deploy.zip -Force
+az functionapp deployment source config-zip \
+  --name azure-function-jnb-agents \
+  --resource-group NovilloBenitoJaime \
+  --src deploy.zip --build-remote true
 ```
+
+Required app settings on the Function App:
+| Setting | Value |
+|---------|-------|
+| `FOUNDRY_PROJECT_ENDPOINT` | Azure AI Foundry project endpoint |
+| `FOUNDRY_MODEL` | Model deployment name |
+
+The Function App needs **System Assigned Managed Identity** with **Azure AI Developer** role on the Foundry resource.
+
+---
 
 ## Stack
 
 | Component | Package |
 |-----------|---------|
-| MCP client | `mcp>=1.9.0` |
+| MCP transport | `mcp>=1.9.0` |
 | Agent orchestration | `agent-framework>=1.8.1` |
-| Azure AI Foundry LLM | `agent-framework-foundry` (bundled) |
+| Azure Functions hosting | `agent-framework-azurefunctions==1.0.0b260521` |
+| Azure AI Foundry LLM | `agent-framework-foundry` |
 | Azure auth | `azure-identity` |
-| Env vars | `python-dotenv` |

@@ -1,0 +1,8 @@
+--pre
+agent-framework-azurefunctions==1.0.0b260521
+agent-framework-durabletask==1.0.0b260521
+agent-framework-foundry>=1.8.1
+agent-framework>=1.8.1
+azure-identity>=1.19.0
+mcp>=1.9.0
+python-dotenv>=1.0.0
