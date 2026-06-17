@@ -1,6 +1,8 @@
-# MCP_Python
+# MCP Server — LearnAgent on Azure Functions
 
-Two components:
+MCP (Model Context Protocol) server deployed on **Azure Functions** that exposes a `LearnAgent` tool: any MCP-compatible client (Claude Code, VS Code, custom agents) can call it to search and retrieve official **Microsoft Learn** documentation in real time.
+
+Built with **Azure AI Foundry** as the LLM backend. Two components:
 
 1. **`agent_client.py`** — local agent that queries Microsoft Learn docs via MCP
 2. **`server/`** — MCP server deployed on Azure Functions, exposes a `LearnAgent` tool
